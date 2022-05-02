@@ -1,0 +1,92 @@
+Parameters:
+  MyKeyName:
+    Description: Name of EC2 KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: deeplearnaws-ssh-key
+    ConstraintDescription: must input
+
+Resources:
+  awsEKSEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref MyKeyName
+      AvailabilityZone:
+        { "Fn::Select": ["0", { "Fn::GetAZs": { "Ref": "AWS::Region" } }] }
+      ImageId: ami-0218d08a1f9dac831
+      InstanceType: t3.micro
+      SecurityGroups:
+        - !Ref awsEKSSSHWEBSG
+      IamInstanceProfile: !Ref awsEKSMyInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: 8
+            DeleteOnTermination: true
+            Encrypted: false
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          timedatectl set-timezone "Asia/Tokyo"
+          localectl set-locale LANG=ja_JP.UTF-8          
+          touch /home/ec2-user/.hushlogin
+          chown ec2-user:ec2-user /home/ec2-user/.hushlogin
+  
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+          unzip /tmp/awscliv2.zip  -d /tmp/awscliv2/
+          /tmp/awscliv2/aws/install
+
+          curl -o kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.21.2/2021-07-05/bin/linux/amd64/kubectl
+          chmod +x ./kubectl
+          mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin
+          echo 'export PATH=$PATH:$HOME/bin' >> ~/.bashrc
+
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+
+          curl -sL https://rpm.nodesource.com/setup_14.x | bash -
+          yum install -y gcc-c++ make
+          yum install -y nodejs
+
+  awsEKSSSHWEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH and Web PORT
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  awsEKSAccessRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  awsEKSMyInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref awsEKSAccessRole
+
+  # awsEKSEIP:
+  #   Type: AWS::EC2::EIP
+  #   Properties:
+  #     InstanceId: !Ref awsEKSEC2
